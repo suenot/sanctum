@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,19 +28,69 @@ import { getFileIcon } from "@/lib/file-icons";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
-// --- Drag & Drop shared state ---
-let draggedPaths: string[] = [];
+// ── Drag state (module-level, shared across tree) ──
+interface DragState {
+  active: boolean;
+  sourcePaths: string[];
+  sourceLabel: string;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+  dropTargetPath: string | null;
+  didMove: boolean;
+}
 
+const DRAG_THRESHOLD = 5;
+
+function getDropDirForElement(el: Element | null): string | null {
+  while (el) {
+    const path = el.getAttribute("data-path");
+    const isDir = el.getAttribute("data-is-dir");
+    if (path && isDir === "true") return path;
+    if (path && isDir === "false") {
+      // file → its parent dir
+      const parts = path.split("/");
+      parts.pop();
+      return parts.join("/") || "/";
+    }
+    el = el.parentElement;
+  }
+  return "/"; // root fallback
+}
+
+// ── Floating drag indicator ──
+function DragOverlay({
+  label,
+  x,
+  y,
+}: {
+  label: string;
+  x: number;
+  y: number;
+}) {
+  return createPortal(
+    <div
+      className="fixed z-[9999] pointer-events-none bg-primary/90 text-primary-foreground text-xs px-2 py-1 rounded shadow-lg whitespace-nowrap"
+      style={{ left: x + 12, top: y - 8 }}
+    >
+      {label}
+    </div>,
+    document.body
+  );
+}
+
+// ── Single tree item ──
 function FileTreeItem({
   node,
   depth,
   dropTargetPath,
-  onDropTargetChange,
+  onDragMouseDown,
 }: {
   node: TreeNode;
   depth: number;
   dropTargetPath: string | null;
-  onDropTargetChange: (path: string | null) => void;
+  onDragMouseDown: (e: React.MouseEvent, node: TreeNode) => void;
 }) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(node.name);
@@ -64,20 +115,16 @@ function FileTreeItem({
 
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
-      if (e.shiftKey) {
-        selectRange(node.path);
-      } else if (e.metaKey || e.ctrlKey) {
-        selectToggle(node.path);
+      // Modifier clicks are handled in onMouseDown for reliability in Tauri
+      if (e.shiftKey || e.metaKey || e.ctrlKey) return;
+      selectSingle(node.path);
+      if (node.is_directory) {
+        toggleExpanded(node.path);
       } else {
-        selectSingle(node.path);
-        if (node.is_directory) {
-          toggleExpanded(node.path);
-        } else {
-          openFile(node.path);
-        }
+        openFile(node.path);
       }
     },
-    [node, selectSingle, selectRange, selectToggle, toggleExpanded, openFile]
+    [node, selectSingle, toggleExpanded, openFile]
   );
 
   const handleRename = async () => {
@@ -127,60 +174,27 @@ function FileTreeItem({
     setCreateName("");
   };
 
-  // --- Drag handlers ---
-  const handleDragStart = useCallback(
-    (e: React.DragEvent) => {
-      if (selectedPaths.has(node.path) && selectedPaths.size > 1) {
-        draggedPaths = Array.from(selectedPaths);
-      } else {
-        draggedPaths = [node.path];
-        selectSingle(node.path);
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      // Only left button, skip if renaming
+      if (e.button !== 0 || isRenaming) return;
+
+      // Handle modifier selection here (more reliable than onClick in Tauri webview)
+      if (e.shiftKey) {
+        e.preventDefault();
+        selectRange(node.path);
+        return;
       }
-      e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("text/plain", draggedPaths.join("\n"));
-    },
-    [node, selectedPaths, selectSingle]
-  );
-
-  const handleDragOver = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const destDir = node.is_directory
-        ? node.path
-        : node.path.split("/").slice(0, -1).join("/") || "/";
-      onDropTargetChange(destDir);
-      e.dataTransfer.dropEffect = "move";
-    },
-    [node, onDropTargetChange]
-  );
-
-  const handleDrop = useCallback(
-    async (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      onDropTargetChange(null);
-
-      const destDir = node.is_directory
-        ? node.path
-        : node.path.split("/").slice(0, -1).join("/") || "/";
-
-      for (const srcPath of draggedPaths) {
-        if (srcPath === destDir) continue;
-        if (destDir.startsWith(srcPath + "/")) continue;
-        const srcParent = srcPath.split("/").slice(0, -1).join("/") || "/";
-        if (srcParent === destDir) continue;
-        try {
-          await vaultApi.moveEntry(srcPath, destDir);
-        } catch (err) {
-          toast.error(`Move failed: ${err}`);
-        }
+      if (e.metaKey || e.ctrlKey) {
+        e.preventDefault();
+        selectToggle(node.path);
+        return;
       }
 
-      draggedPaths = [];
-      await refresh();
+      // Start potential drag for non-modifier clicks
+      onDragMouseDown(e, node);
     },
-    [node, onDropTargetChange, refresh]
+    [node, isRenaming, onDragMouseDown, selectRange, selectToggle]
   );
 
   return (
@@ -199,11 +213,9 @@ function FileTreeItem({
             )}
             style={{ paddingLeft: `${depth * 12 + 8}px` }}
             onClick={handleClick}
-            draggable
-            onDragStart={handleDragStart}
-            onDragOver={handleDragOver}
-            onDrop={handleDrop}
+            onMouseDown={handleMouseDown}
             data-path={node.path}
+            data-is-dir={node.is_directory ? "true" : "false"}
           >
             {node.is_directory ? (
               isExpanded ? (
@@ -227,6 +239,7 @@ function FileTreeItem({
                 }}
                 autoFocus
                 onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
               />
             ) : (
               <span className="truncate">{node.name}</span>
@@ -311,7 +324,7 @@ function FileTreeItem({
               node={child}
               depth={depth + 1}
               dropTargetPath={dropTargetPath}
-              onDropTargetChange={onDropTargetChange}
+              onDragMouseDown={onDragMouseDown}
             />
           ))}
           {node.children.length === 0 && (
@@ -328,6 +341,7 @@ function FileTreeItem({
   );
 }
 
+// ── Main FileTree with mouse-event drag & drop ──
 export function FileTree() {
   const tree = useFileTreeStore((s) => s.tree);
   const refresh = useFileTreeStore((s) => s.refresh);
@@ -344,8 +358,113 @@ export function FileTree() {
     "file" | "folder" | null
   >(null);
   const [createName, setCreateName] = useState("");
-  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
+  const [drag, setDrag] = useState<DragState | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<DragState | null>(null);
+
+  // Keep ref in sync with state (for event listeners)
+  dragRef.current = drag;
+
+  // ── Mouse-based drag & drop ──
+  const handleDragMouseDown = useCallback(
+    (e: React.MouseEvent, node: TreeNode) => {
+      if (e.button !== 0) return;
+
+      const paths = selectedPaths.has(node.path)
+        ? Array.from(selectedPaths)
+        : [node.path];
+
+      const label =
+        paths.length > 1 ? `${paths.length} items` : node.name;
+
+      const state: DragState = {
+        active: false,
+        sourcePaths: paths,
+        sourceLabel: label,
+        startX: e.clientX,
+        startY: e.clientY,
+        currentX: e.clientX,
+        currentY: e.clientY,
+        dropTargetPath: null,
+        didMove: false,
+      };
+
+      dragRef.current = state;
+      // Don't setDrag yet — wait for threshold
+    },
+    [selectedPaths]
+  );
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+
+      const dx = e.clientX - d.startX;
+      const dy = e.clientY - d.startY;
+
+      if (!d.active) {
+        if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
+          d.active = true;
+          d.didMove = true;
+          document.body.style.cursor = "grabbing";
+          document.body.style.userSelect = "none";
+        } else {
+          return;
+        }
+      }
+
+      // Find drop target under cursor
+      const elUnder = document.elementFromPoint(e.clientX, e.clientY);
+      const dropDir = getDropDirForElement(elUnder);
+
+      setDrag({
+        ...d,
+        currentX: e.clientX,
+        currentY: e.clientY,
+        dropTargetPath: dropDir,
+      });
+    };
+
+    const handleMouseUp = async (e: MouseEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+
+      dragRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+
+      if (!d.active || !d.didMove) {
+        setDrag(null);
+        return;
+      }
+
+      const destDir = d.dropTargetPath || "/";
+      setDrag(null);
+
+      // Perform move
+      for (const srcPath of d.sourcePaths) {
+        if (srcPath === destDir) continue;
+        if (destDir.startsWith(srcPath + "/")) continue;
+        const srcParent = srcPath.split("/").slice(0, -1).join("/") || "/";
+        if (srcParent === destDir) continue;
+        try {
+          await vaultApi.moveEntry(srcPath, destDir);
+        } catch (err) {
+          toast.error(`Move failed: ${err}`);
+        }
+      }
+
+      await useFileTreeStore.getState().refresh();
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
 
   const handleCreateRoot = async () => {
     if (!createName) {
@@ -367,7 +486,7 @@ export function FileTree() {
     setCreateName("");
   };
 
-  // --- Keyboard navigation (VSCode-like) ---
+  // ── Keyboard navigation (VSCode-like) ──
   const handleKeyDown = useCallback(
     async (e: React.KeyboardEvent) => {
       const flat = getFlatNodes();
@@ -413,7 +532,6 @@ export function FileTree() {
           if (node.is_directory && !expandedPaths.has(node.path)) {
             await toggleExpanded(node.path);
           } else if (node.is_directory && expandedPaths.has(node.path)) {
-            // Move focus to first child
             if (currentIdx + 1 < flat.length) {
               selectSingle(flat[currentIdx + 1].path);
             }
@@ -427,7 +545,6 @@ export function FileTree() {
           if (node.is_directory && expandedPaths.has(node.path)) {
             await toggleExpanded(node.path);
           } else {
-            // Go to parent
             const parentPath =
               node.path.split("/").slice(0, -1).join("/") || "/";
             const parentNode = flat.find((n) => n.path === parentPath);
@@ -492,42 +609,10 @@ export function FileTree() {
     ]
   );
 
-  // Drop on empty space = move to root
-  const handleRootDrop = useCallback(
-    async (e: React.DragEvent) => {
-      e.preventDefault();
-      setDropTargetPath(null);
-      for (const srcPath of draggedPaths) {
-        const srcParent = srcPath.split("/").slice(0, -1).join("/") || "/";
-        if (srcParent === "/" || srcParent === "") continue;
-        try {
-          await vaultApi.moveEntry(srcPath, "/");
-        } catch (err) {
-          toast.error(`Move failed: ${err}`);
-        }
-      }
-      draggedPaths = [];
-      await refresh();
-    },
-    [refresh]
-  );
-
-  const handleRootDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDropTargetPath("/");
-    e.dataTransfer.dropEffect = "move";
-  }, []);
-
-  const handleDragEnd = useCallback(() => {
-    setDropTargetPath(null);
-    draggedPaths = [];
-  }, []);
+  const dropTargetPath = drag?.active ? drag.dropTargetPath : null;
 
   return (
-    <div
-      className="flex flex-col h-full bg-muted/20 overflow-hidden min-w-0"
-      onDragEnd={handleDragEnd}
-    >
+    <div className="flex flex-col h-full bg-muted/20 overflow-hidden min-w-0">
       <div className="flex items-center justify-between px-3 py-2 border-b border-border shrink-0">
         <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground truncate">
           Explorer
@@ -568,8 +653,8 @@ export function FileTree() {
           className="py-1 outline-none"
           tabIndex={0}
           onKeyDown={handleKeyDown}
-          onDragOver={handleRootDragOver}
-          onDrop={handleRootDrop}
+          data-path="/"
+          data-is-dir="true"
         >
           {isCreatingRoot && (
             <div
@@ -606,7 +691,7 @@ export function FileTree() {
               node={node}
               depth={0}
               dropTargetPath={dropTargetPath}
-              onDropTargetChange={setDropTargetPath}
+              onDragMouseDown={handleDragMouseDown}
             />
           ))}
           {tree.length === 0 && !isCreatingRoot && (
@@ -617,6 +702,15 @@ export function FileTree() {
           )}
         </div>
       </ScrollArea>
+
+      {/* Floating drag indicator */}
+      {drag?.active && (
+        <DragOverlay
+          label={drag.sourceLabel}
+          x={drag.currentX}
+          y={drag.currentY}
+        />
+      )}
     </div>
   );
 }
