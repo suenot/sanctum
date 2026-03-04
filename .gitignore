@@ -39,3 +39,16 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# vault files (never commit encrypted data)
+*.vault
+*.vault.tmp
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Tauri
+src-tauri/target/

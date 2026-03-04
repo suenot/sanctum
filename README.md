@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Sanctum
+
+A VSCode-like desktop editor for encrypted file vaults. Your private data stays encrypted at rest — viruses and malware can't read plaintext. Unlock with a master password or Touch ID.
+
+## Features
+
+- **AES-256-GCM encryption** with Argon2id key derivation (64 MB memory, 3 iterations)
+- **Monaco Editor** with syntax highlighting for 50+ languages
+- **Virtual filesystem** — directories, text files, images, binaries inside a single `.vault` file
+- **Touch ID** (macOS) — biometric unlock via Keychain
+- **Auto-lock** after 5 minutes of inactivity
+- **Atomic writes** — `.vault.tmp` + rename prevents corruption
+- **New random nonce** on every save
+- **Drag & drop** files and folders in the tree
+- **VSCode-like keyboard navigation** — arrow keys, Shift/Cmd+click multi-select, F2 rename, Enter to open
+- **Image viewer** with zoom + transparency grid
+- **Hex viewer** for binary files
+- **Dark theme** by default
+
+## Vault Format
+
+```
+[4B magic "SVLT"][2B version][32B salt][12B nonce][N bytes AES-256-GCM ciphertext]
+```
+
+Payload = encrypted MessagePack of the virtual filesystem tree.
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Desktop shell | Tauri v2 |
+| Frontend | Next.js (static export) |
+| UI | shadcn/ui + Tailwind |
+| Editor | Monaco Editor |
+| State | Zustand |
+| Encryption | AES-256-GCM + Argon2id |
+| Serialization | MessagePack (rmp-serde) |
+| Biometric | security-framework (macOS Keychain) |
+| Secure memory | zeroize |
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+
+- Node.js 18+
+- Rust 1.70+
+- [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+
+### Development
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run tauri dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Build
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run tauri build
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The app binary will be in `src-tauri/target/release/bundle/`.
 
-## Learn More
+## Security Model
 
-To learn more about Next.js, take a look at the following resources:
+- All crypto runs in Rust — no keys ever touch JavaScript
+- Derived key held in `Zeroizing<[u8; 32]>` — wiped from memory on lock
+- New random 12-byte nonce generated on every save
+- Argon2id: 64 MB memory cost, 3 iterations, 1 parallelism
+- Biometric key stored in macOS Keychain with hardware-level protection
+- Auto-lock clears all decrypted data from memory after 5 min idle
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## License
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+MIT
