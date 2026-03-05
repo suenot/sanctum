@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{Result, VaultError};
 use crate::state::{AppState, UnlockedVault};
 use crate::vault::{
-    crypto,
+    crypto::{self, EncryptionPreset},
     format::{read_vault, write_vault},
     serialization::{deserialize_vfs, serialize_vfs},
     vfs::VirtualFS,
@@ -15,7 +15,7 @@ fn persist_vault(vault: &UnlockedVault) -> Result<()> {
     let plaintext = serialize_vfs(&vault.vfs)?;
     let nonce: [u8; 12] = rand::random();
     let ciphertext = crypto::encrypt(&vault.key, &nonce, &plaintext)?;
-    write_vault(&vault.file_path, &vault.salt, &nonce, &ciphertext)?;
+    write_vault(&vault.file_path, &vault.salt, &nonce, vault.preset, &ciphertext)?;
     Ok(())
 }
 
@@ -24,22 +24,30 @@ pub async fn create_vault(
     state: tauri::State<'_, AppState>,
     path: String,
     password: String,
+    preset: Option<String>,
 ) -> Result<()> {
+    let encryption_preset = match preset.as_deref() {
+        Some("fast") => EncryptionPreset::Fast,
+        Some("paranoid") => EncryptionPreset::Paranoid,
+        _ => EncryptionPreset::Standard,
+    };
+
     let salt: [u8; 32] = rand::random();
     let nonce: [u8; 12] = rand::random();
-    let key = crypto::derive_key(password.as_bytes(), &salt);
+    let key = crypto::derive_key(password.as_bytes(), &salt, encryption_preset);
 
     let vfs = VirtualFS::new();
     let plaintext = serialize_vfs(&vfs)?;
     let ciphertext = crypto::encrypt(&key, &nonce, &plaintext)?;
 
-    write_vault(Path::new(&path), &salt, &nonce, &ciphertext)?;
+    write_vault(Path::new(&path), &salt, &nonce, encryption_preset, &ciphertext)?;
 
     let mut vault_lock = state.vault.write().await;
     *vault_lock = Some(UnlockedVault {
         vfs,
         key,
         salt,
+        preset: encryption_preset,
         file_path: PathBuf::from(&path),
         dirty: false,
     });
@@ -53,8 +61,8 @@ pub async fn unlock_vault(
     path: String,
     password: String,
 ) -> Result<()> {
-    let (salt, nonce, ciphertext) = read_vault(Path::new(&path))?;
-    let key = crypto::derive_key(password.as_bytes(), &salt);
+    let (preset, salt, nonce, ciphertext) = read_vault(Path::new(&path))?;
+    let key = crypto::derive_key(password.as_bytes(), &salt, preset);
     let plaintext = crypto::decrypt(&key, &nonce, &ciphertext)?;
     let vfs = deserialize_vfs(&plaintext)?;
 
@@ -63,6 +71,7 @@ pub async fn unlock_vault(
         vfs,
         key,
         salt,
+        preset,
         file_path: PathBuf::from(&path),
         dirty: false,
     });

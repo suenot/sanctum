@@ -120,7 +120,7 @@ pub async fn unlock_vault_biometric(
         let key_raw = macos::retrieve_key(&account)?;
         let key = Zeroizing::new(key_raw);
 
-        let (salt, nonce, ciphertext) = read_vault(std::path::Path::new(&path))?;
+        let (preset, salt, nonce, ciphertext) = read_vault(std::path::Path::new(&path))?;
         let plaintext = crypto::decrypt(&key, &nonce, &ciphertext)?;
         let vfs = deserialize_vfs(&plaintext)?;
 
@@ -129,6 +129,7 @@ pub async fn unlock_vault_biometric(
             vfs,
             key,
             salt,
+            preset,
             file_path: PathBuf::from(&path),
             dirty: false,
         });

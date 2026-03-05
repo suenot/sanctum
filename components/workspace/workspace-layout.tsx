@@ -9,9 +9,10 @@ import { useVaultStore } from "@/store/vault-store";
 import { useEditorStore } from "@/store/editor-store";
 import { useAutoLock } from "@/hooks/use-auto-lock";
 import { vaultApi } from "@/hooks/use-vault";
-import { Lock, Shield } from "lucide-react";
+import { Lock, Shield, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { SettingsDialog } from "./settings-dialog";
 
 function DragHandle({
   onDragStart,
@@ -63,6 +64,7 @@ export function WorkspaceLayout() {
 
   const [sidebarWidth, setSidebarWidth] = useState(250);
   const baseWidthRef = useRef(250);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useAutoLock();
 
@@ -112,7 +114,7 @@ export function WorkspaceLayout() {
       <div className="flex items-center justify-between h-10 px-3 border-b border-border bg-muted/30 shrink-0">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Shield className="h-4 w-4 text-primary" />
-          <span>Secret Vault</span>
+          <span>Sanctum</span>
         </div>
         <div className="flex items-center gap-1">
           <Button
@@ -122,6 +124,15 @@ export function WorkspaceLayout() {
             onClick={handleSetupBiometric}
           >
             Enable Touch ID
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 p-0"
+            onClick={() => setSettingsOpen(true)}
+            title="Settings"
+          >
+            <Settings className="h-3.5 w-3.5" />
           </Button>
           <Button
             variant="ghost"
@@ -151,6 +162,8 @@ export function WorkspaceLayout() {
 
       {/* Status bar */}
       <StatusBar />
+
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   );
 }

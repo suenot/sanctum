@@ -14,8 +14,8 @@ export type FileContent =
   | { type: "Binary"; data: string; mime_type: string };
 
 export const vaultApi = {
-  createVault: (path: string, password: string) =>
-    invoke<void>("create_vault", { path, password }),
+  createVault: (path: string, password: string, preset?: string) =>
+    invoke<void>("create_vault", { path, password, preset: preset ?? null }),
 
   unlockVault: (path: string, password: string) =>
     invoke<void>("unlock_vault", { path, password }),

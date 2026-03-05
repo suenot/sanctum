@@ -10,9 +10,21 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Lock, Plus, FolderOpen, Fingerprint, Shield } from "lucide-react";
 import { vaultApi } from "@/hooks/use-vault";
 import { useVaultStore } from "@/store/vault-store";
+import {
+  useSettingsStore,
+  ENCRYPTION_PRESETS,
+  type EncryptionPreset,
+} from "@/store/settings-store";
 
 export function LoginScreen() {
   const [password, setPassword] = useState("");
@@ -22,6 +34,9 @@ export function LoginScreen() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const defaultPreset = useSettingsStore((s) => s.defaultEncryptionPreset);
+  const [selectedPreset, setSelectedPreset] =
+    useState<EncryptionPreset>(defaultPreset);
 
   const { setStatus, setError, error, unlock } = useVaultStore();
 
@@ -103,7 +118,7 @@ export function LoginScreen() {
 
       setIsLoading(true);
       setStatus("unlocking");
-      await vaultApi.createVault(selected, newPassword);
+      await vaultApi.createVault(selected, newPassword, selectedPreset);
       setCreateDialogOpen(false);
       setNewPassword("");
       setConfirmPassword("");
@@ -122,7 +137,7 @@ export function LoginScreen() {
           <div className="p-4 rounded-full bg-primary/10">
             <Shield className="w-12 h-12 text-primary" />
           </div>
-          <h1 className="text-2xl font-bold">Secret Vault</h1>
+          <h1 className="text-2xl font-bold">Sanctum</h1>
           <p className="text-sm text-muted-foreground text-center">
             Encrypted storage for your private files
           </p>
@@ -210,6 +225,36 @@ export function LoginScreen() {
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleCreateVault()}
                   />
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">
+                      Encryption strength
+                    </label>
+                    <Select
+                      value={selectedPreset}
+                      onValueChange={(v) =>
+                        setSelectedPreset(v as EncryptionPreset)
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(
+                          Object.entries(ENCRYPTION_PRESETS) as [
+                            EncryptionPreset,
+                            { label: string; description: string },
+                          ][]
+                        ).map(([key, { label, description }]) => (
+                          <SelectItem key={key} value={key}>
+                            <span>{label}</span>
+                            <span className="text-xs text-muted-foreground ml-2">
+                              {description}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <Button
                     className="w-full"
                     onClick={handleCreateVault}
